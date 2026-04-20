@@ -142,6 +142,30 @@ def write_workspace_claude_md(
     return claude_md
 
 
+PROMPTS_DIR = Path.home() / ".mayushii" / "prompts"
+
+
+def write_worker_prompt(
+    task_id: str,
+    role: str,
+    role_prompt: str,
+    context: str = "",
+) -> Path:
+    """Write worker prompt to ~/.mayushii/prompts/<task-id>.md instead of repo's CLAUDE.md."""
+    PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    prompt_path = PROMPTS_DIR / f"{task_id}.md"
+    content = generate_claude_md(role, task_id, role_prompt, context)
+    prompt_path.write_text(content)
+    return prompt_path
+
+
+def cleanup_worker_prompt(task_id: str) -> None:
+    """Remove a worker's prompt file."""
+    prompt_path = PROMPTS_DIR / f"{task_id}.md"
+    if prompt_path.exists():
+        prompt_path.unlink()
+
+
 # --- Hook implementations (called by `mayushii hook` CLI commands) ---
 
 def handle_session_start(task_id: str) -> str:

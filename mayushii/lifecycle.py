@@ -16,7 +16,7 @@ from pathlib import Path
 from mayushii import tmux
 from mayushii.store import Store, Session, MessageDirection
 from mayushii.skills import inject_skills, discover_skills_repo, load_catalog
-from mayushii.hooks import write_workspace_settings, write_workspace_claude_md
+from mayushii.hooks import write_workspace_settings, write_worker_prompt, cleanup_worker_prompt
 
 
 MAYUSHII_HOME = Path.home() / ".mayushii"
@@ -107,9 +107,9 @@ def start_worker(
     if skills:
         inject_skills(workspace, skills, skills_repo)
 
-    # Write CLAUDE.md
+    # Write worker prompt to ~/.mayushii/prompts/<task-id>.md (not repo's CLAUDE.md)
     role_prompt = _load_role_prompt(role)
-    write_workspace_claude_md(workspace, role, task_id, role_prompt, context)
+    prompt_path = write_worker_prompt(task_id, role, role_prompt, context)
 
     # Install hooks (call back into mayushii CLI)
     write_workspace_settings(workspace, task_id)
@@ -147,9 +147,9 @@ def start_worker(
     # Update status
     store.update_session_status(task_id, "running")
 
-    # Send initial prompt
+    # Send initial prompt — tell worker to read its prompt file
     if not prompt:
-        prompt = f"Read your task: `bd show {task_id}`. Begin working."
+        prompt = f"Read {prompt_path} for your instructions, then run `bd show {task_id}`. Begin working."
     tmux.send_command(target, prompt)
 
     return session
@@ -174,6 +174,9 @@ def stop_worker(store: Store, task_id: str, cleanup: bool = True) -> None:
 
     # Update state
     store.update_session_status(task_id, "stopped")
+
+    # Clean up prompt file
+    cleanup_worker_prompt(task_id)
 
     # Clean up workspace (only if it's our managed workspace, not a user repo)
     if cleanup:
