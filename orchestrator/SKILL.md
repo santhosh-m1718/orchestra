@@ -26,11 +26,12 @@ bd search "keyword"                                 # find tasks
 ```
 
 ### Worker Management
+**ALWAYS pass `--repo <path>` from the "Target Repository" section in CLAUDE.md.**
 ```bash
-orchestra worker start orch-XX --role explore --skills debug,backend
+orchestra worker start orch-XX --role explore --skills debug,backend --repo /path/to/repo
 orchestra worker start orch-XX --role edit --skills git,backend --repo /path/to/repo
-orchestra worker start orch-XX --role verify --skills code-review
-orchestra worker start orch-XX --role explore --auto-skills   # LLM picks skills
+orchestra worker start orch-XX --role verify --skills code-review --repo /path/to/repo
+orchestra worker start orch-XX --role explore --auto-skills --repo /path/to/repo
 orchestra worker send orch-XX "message" --type nudge          # light touch
 orchestra worker send orch-XX "message" --type status         # /btw query
 orchestra worker send orch-XX "message" --type normal         # full context
@@ -97,28 +98,45 @@ bd create "Edit: implement the fix" -t task -p 1 --deps orch-abc
 ### 4. Launch Workers as Tasks Become Ready
 ```bash
 bd ready --json                    # what's unblocked?
-orchestra worker start orch-abc --role explore --skills debug,backend
+orchestra worker start orch-abc --role explore --skills debug,backend --repo /path/to/repo
+# ALWAYS use the --repo path from your CLAUDE.md "Target Repository" section
 ```
 
-### 5. Monitor and Coordinate
-Workers signal you automatically:
+### 5. Monitor and Coordinate — WAIT FOR WORKERS
+
+**CRITICAL: Do NOT report completion until ALL workers have finished.**
+
+After launching a worker, you MUST enter a monitoring loop:
+
+1. Run `orchestra status` to check worker states
+2. Run `orchestra worker output <task-id>` to see what the worker is doing
+3. Run `orchestra stalls` to check for stuck workers
+4. **WAIT** for completion signals before proceeding
+
+Workers signal you automatically via messages in your terminal:
 - `[Worker orch-abc]: done — <reason>` (task completed)
 - `[Worker orch-abc]: failed — <reason>` (session ended without closing)
 - `[Worker orch-abc]: stalled — no activity for N minutes`
 - `[Worker orch-abc asks]: <question>` (worker needs guidance)
 
-When you see a completion signal:
+**When you see a completion signal:**
 1. Check `bd ready --json` for newly unblocked tasks
 2. Read the completed task: `bd show orch-abc --json`
-3. Launch next worker with context from prior tasks
+3. Review worker output: `orchestra worker output orch-abc`
+4. Launch next worker with context from prior tasks
 
-Use `orchestra worker send` to share context:
+**While waiting (no signal yet):**
+- Periodically run `orchestra status` and `orchestra stalls`
+- Check `orchestra worker output <task-id>` to monitor progress
+- DO NOT declare the task done — wait for the signal
+
+Use `orchestra worker send` to share context between workers:
 ```bash
 orchestra worker send orch-def "Explore found bug in auth.py:142, session token not refreshed" --type nudge
 ```
 
 ### 6. Report to User
-When all tasks are done, summarize what was accomplished.
+**ONLY** when all tasks are done (all workers signaled completion), summarize what was accomplished.
 
 ## Recovery
 - **Worker stalled**: `orchestra worker send orch-XX "try a different approach" --type nudge`
@@ -127,6 +145,8 @@ When all tasks are done, summarize what was accomplished.
 - **Check stalls**: `orchestra stalls --threshold 5`
 
 ## Rules
+- **ALWAYS pass `--repo` when starting workers** — use the path from "Target Repository" in your CLAUDE.md
+- **NEVER report done until all workers signal completion** — monitor with `orchestra status` and `orchestra worker output`
 - Always create beads tasks BEFORE launching workers
 - Present your plan to the user before executing
 - Use the minimum number of agents needed

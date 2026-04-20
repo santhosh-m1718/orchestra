@@ -58,6 +58,7 @@ def start(
     session_name: str = typer.Option("orchestra", "--name", "-n", help="tmux session name"),
     prompt: str = typer.Option("", "--prompt", "-p", help="Initial prompt for orchestrator"),
     model: str = typer.Option("claude-opus-4-6", "--model", "-m", help="Claude model to use"),
+    repo: str = typer.Option("", "--repo", "-r", help="Target repository path for workers"),
     no_attach: bool = typer.Option(False, "--no-attach", help="Don't auto-attach to tmux"),
 ) -> None:
     """Start the orchestrator — creates tmux session, launches Claude Code, and attaches you."""
@@ -79,11 +80,18 @@ def start(
         parts = raw.split("---", 2)
         skill_content = parts[2].strip() if len(parts) >= 3 else raw
 
+    # Resolve the target repo path
+    repo_path = Path(repo).resolve() if repo else Path.cwd()
+
     claude_md = workspace / "CLAUDE.md"
     claude_md.write_text(
         "# Orchestra — AI Agent Orchestrator\n\n"
         "You are Mayushii, an AI orchestrator that coordinates worker agents.\n"
         "You have access to `bd` (beads) for task management and `orchestra` CLI for worker management.\n\n"
+        f"## Target Repository\n"
+        f"**IMPORTANT**: All workers MUST target this repo: `{repo_path}`\n"
+        f"When launching workers, ALWAYS pass `--repo {repo_path}`:\n"
+        f"```\norchestra worker start <task-id> --role explore --repo {repo_path}\n```\n\n"
         f"{skill_content}\n"
     )
 
