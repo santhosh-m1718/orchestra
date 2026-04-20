@@ -58,7 +58,14 @@ def create_workspace(task_id: str) -> Path:
     return workspace
 
 
-DEFAULT_MODEL = "claude-opus-4-6"
+DEFAULT_WORKER_MODEL = "claude-sonnet-4-6"
+
+ROLE_MODELS = {
+    "explore": "claude-sonnet-4-6",
+    "plan": "claude-sonnet-4-6",
+    "edit": "claude-sonnet-4-6",
+    "verify": "claude-sonnet-4-6",
+}
 
 
 def start_worker(
@@ -71,7 +78,7 @@ def start_worker(
     context: str = "",
     prompt: str | None = None,
     repo_path: str | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> Session:
     """Launch a worker agent in a tmux window.
 
@@ -85,6 +92,10 @@ def start_worker(
     7. Launch Claude Code
     8. Wait for ready, then send initial prompt
     """
+    # Pick model: explicit > role default > global default
+    if not model:
+        model = ROLE_MODELS.get(role, DEFAULT_WORKER_MODEL)
+
     # Workspace setup — if repo_path given, work there instead
     if repo_path:
         workspace = Path(repo_path)
