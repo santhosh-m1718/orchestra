@@ -124,6 +124,9 @@ def start_worker(
     tmux.wait_for_ready(target, sentinel="$", timeout=5)
     tmux.wait_for_ready(target, sentinel="%", timeout=3)
 
+    # Explicitly cd into workspace (shell profile may override tmux -c cwd)
+    tmux.send_command(target, f"cd {workspace}")
+
     # Launch Claude Code with model
     tmux.send_command(target, f"claude --model {model} --dangerously-skip-permissions")
 
