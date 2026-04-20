@@ -1,4 +1,4 @@
-"""Hook generation — creates Claude Code hooks that call back into orchestra CLI.
+"""Hook generation — creates Claude Code hooks that call back into mayushii CLI.
 
 Three hooks per worker workspace:
 - SessionStart: injects task context when Claude Code boots
@@ -16,12 +16,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from orchestra.store import Store
+from mayushii.store import Store
 
 
 def _get_repo_path() -> Path:
-    """Get the orchestra repo path from stored config."""
-    default_repo_file = Path.home() / ".orchestra" / "default-repo"
+    """Get the repo path from stored config."""
+    default_repo_file = Path.home() / ".mayushii" / "default-repo"
     if default_repo_file.exists():
         return Path(default_repo_file.read_text().strip())
     return Path(__file__).parent.parent
@@ -38,7 +38,7 @@ def _beads_env() -> dict[str, str]:
 
 
 def generate_hooks_config(task_id: str) -> dict:
-    """Generate .claude/settings.json hooks that call back into orchestra CLI."""
+    """Generate .claude/settings.json hooks that call back into mayushii CLI."""
     return {
         "hooks": {
             "SessionStart": [
@@ -46,7 +46,7 @@ def generate_hooks_config(task_id: str) -> dict:
                     "matcher": "",
                     "hooks": [{
                         "type": "command",
-                        "command": f"orchestra hook session-start {task_id}",
+                        "command": f"mayushii hook session-start {task_id}",
                     }],
                 }
             ],
@@ -55,7 +55,7 @@ def generate_hooks_config(task_id: str) -> dict:
                     "matcher": "",
                     "hooks": [{
                         "type": "command",
-                        "command": f"orchestra hook heartbeat {task_id}",
+                        "command": f"mayushii hook heartbeat {task_id}",
                     }],
                 }
             ],
@@ -64,7 +64,7 @@ def generate_hooks_config(task_id: str) -> dict:
                     "matcher": "",
                     "hooks": [{
                         "type": "command",
-                        "command": f"orchestra hook stop {task_id}",
+                        "command": f"mayushii hook stop {task_id}",
                     }],
                 }
             ],
@@ -121,7 +121,7 @@ def generate_claude_md(role: str, task_id: str, role_prompt: str, context: str =
         f"`bd update {task_id} --status blocked --append-notes \"BLOCKED: <describe the issue>\"`",
         "",
         "## To Ask the Orchestrator a Question",
-        f"`orchestra crew ask {task_id} \"your question here\"`",
+        f"`mayushii crew ask {task_id} \"your question here\"`",
         "The orchestrator will see your question and can send you a response.",
     ])
 
@@ -142,7 +142,7 @@ def write_workspace_claude_md(
     return claude_md
 
 
-# --- Hook implementations (called by `orchestra hook` CLI commands) ---
+# --- Hook implementations (called by `mayushii hook` CLI commands) ---
 
 def handle_session_start(task_id: str) -> str:
     """Called by SessionStart hook. Returns context to inject into agent."""
@@ -233,13 +233,13 @@ def handle_stop(task_id: str) -> None:
     if session.orchestrator_id:
         orch = store.get_orchestrator(session.orchestrator_id)
         if orch:
-            from orchestra import tmux
+            from mayushii import tmux
             target = f"{orch.tmux_session}:orchestrator"
             if tmux.session_exists(orch.tmux_session):
                 windows = {w.name for w in tmux.list_windows(orch.tmux_session)}
                 if "orchestrator" in windows:
                     tmux.send_command(target, f"[Worker {task_id}]: {status} — {reason}")
                 else:
-                    print(f"[orchestra] WARNING: orchestrator window gone, completion signal for {task_id} lost", file=sys.stderr)
+                    print(f"[mayushii] WARNING: orchestrator window gone, completion signal for {task_id} lost", file=sys.stderr)
             else:
-                print(f"[orchestra] WARNING: tmux session {orch.tmux_session} gone, completion signal for {task_id} lost", file=sys.stderr)
+                print(f"[mayushii] WARNING: tmux session {orch.tmux_session} gone, completion signal for {task_id} lost", file=sys.stderr)

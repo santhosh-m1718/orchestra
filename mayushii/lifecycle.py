@@ -13,19 +13,19 @@ import re
 import shutil
 from pathlib import Path
 
-from orchestra import tmux
-from orchestra.store import Store, Session, MessageDirection
-from orchestra.skills import inject_skills, discover_skills_repo, load_catalog
-from orchestra.hooks import write_workspace_settings, write_workspace_claude_md
+from mayushii import tmux
+from mayushii.store import Store, Session, MessageDirection
+from mayushii.skills import inject_skills, discover_skills_repo, load_catalog
+from mayushii.hooks import write_workspace_settings, write_workspace_claude_md
 
 
-ORCHESTRA_HOME = Path.home() / ".orchestra"
-WORKSPACES_DIR = ORCHESTRA_HOME / "workspaces"
+MAYUSHII_HOME = Path.home() / ".mayushii"
+WORKSPACES_DIR = MAYUSHII_HOME / "workspaces"
 
 
 def _get_repo_path() -> Path:
-    """Get the orchestra repo path from stored config."""
-    default_repo_file = ORCHESTRA_HOME / "default-repo"
+    """Get the repo path from stored config."""
+    default_repo_file = MAYUSHII_HOME / "default-repo"
     if default_repo_file.exists():
         return Path(default_repo_file.read_text().strip())
     return Path(__file__).parent.parent
@@ -111,7 +111,7 @@ def start_worker(
     role_prompt = _load_role_prompt(role)
     write_workspace_claude_md(workspace, role, task_id, role_prompt, context)
 
-    # Install hooks (call back into orchestra CLI, not inline bash)
+    # Install hooks (call back into mayushii CLI)
     write_workspace_settings(workspace, task_id)
 
     # Window name: role-taskid (sanitized for tmux safety)
@@ -272,7 +272,7 @@ def refresh_worker_states(store: Store, orchestrator_id: str) -> None:
         if session.window_name not in windows:
             # Check beads to see if the task was properly closed
             import subprocess
-            from orchestra.hooks import _beads_env
+            from mayushii.hooks import _beads_env
             try:
                 result = subprocess.run(
                     ["bd", "show", session.task_id, "--json"],

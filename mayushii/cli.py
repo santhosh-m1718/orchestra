@@ -1,21 +1,21 @@
-"""Orchestra CLI — Typer-based interface for the orchestrator.
+"""Mayushii CLI — Typer-based interface for the orchestrator.
 
 Commands:
-  orchestra start                         — start orchestrator tmux session
-  orchestra stop                          — stop everything
-  orchestra status                        — show dashboard
-  orchestra stalls                        — check for stalled workers
-  orchestra worker start <id>             — launch worker
-  orchestra worker send <id> <msg>        — message a worker
-  orchestra worker list                   — show workers
-  orchestra worker stop <id>              — stop worker
-  orchestra worker output <id>            — capture worker output
-  orchestra crew ask <id> <question>      — worker asks orchestrator
-  orchestra hook session-start <id>       — called by SessionStart hook
-  orchestra hook heartbeat <id>           — called by PostToolUse hook
-  orchestra hook stop <id>                — called by Stop hook
-  orchestra skill list                    — list available skills
-  orchestra skill select <desc>           — LLM skill selection
+  mayushii start                         — start orchestrator tmux session
+  mayushii stop                          — stop everything
+  mayushii status                        — show dashboard
+  mayushii stalls                        — check for stalled workers
+  mayushii worker start <id>             — launch worker
+  mayushii worker send <id> <msg>        — message a worker
+  mayushii worker list                   — show workers
+  mayushii worker stop <id>              — stop worker
+  mayushii worker output <id>            — capture worker output
+  mayushii crew ask <id> <question>      — worker asks orchestrator
+  mayushii hook session-start <id>       — called by SessionStart hook
+  mayushii hook heartbeat <id>           — called by PostToolUse hook
+  mayushii hook stop <id>                — called by Stop hook
+  mayushii skill list                    — list available skills
+  mayushii skill select <desc>           — LLM skill selection
 """
 
 from __future__ import annotations
@@ -31,11 +31,11 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from orchestra.store import Store, MessageDirection
-from orchestra import tmux, lifecycle, skills
-from orchestra.hooks import handle_session_start, handle_heartbeat, handle_stop, _beads_env
+from mayushii.store import Store, MessageDirection
+from mayushii import tmux, lifecycle, skills
+from mayushii.hooks import handle_session_start, handle_heartbeat, handle_stop, _beads_env
 
-app = typer.Typer(name="orchestra", help="AI Agent Orchestrator — beads + tmux + Claude Code")
+app = typer.Typer(name="mayushii", help="Mayushii — AI Agent Orchestrator — beads + tmux + Claude Code")
 worker_app = typer.Typer(name="worker", help="Manage worker agents")
 skill_app = typer.Typer(name="skill", help="Manage skills")
 hook_app = typer.Typer(name="hook", help="Hook callbacks (called by Claude Code, not you)")
@@ -55,10 +55,10 @@ store = Store()
 
 @app.command()
 def start(
-    session_name: str = typer.Option("orchestra", "--name", "-n", help="tmux session name"),
+    session_name: str = typer.Option("mayushii", "--name", "-n", help="tmux session name"),
     prompt: str = typer.Option("", "--prompt", "-p", help="Initial prompt for orchestrator"),
     model: str = typer.Option("claude-opus-4-6", "--model", "-m", help="Claude model to use"),
-    repo: str = typer.Option("", "--repo", "-r", help="Target repository path (default: orchestra source dir)"),
+    repo: str = typer.Option("", "--repo", "-r", help="Target repository path"),
     no_attach: bool = typer.Option(False, "--no-attach", help="Don't auto-attach to tmux"),
 ) -> None:
     """Start the orchestrator — creates tmux session, launches Claude Code, and attaches you."""
@@ -68,8 +68,7 @@ def start(
         subprocess.run(["tmux", "attach-session", "-t", existing.tmux_session])
         return
 
-    # Resolve target repo — stored in ~/.orchestra/default-repo for persistence
-    default_repo_file = Path.home() / ".orchestra" / "default-repo"
+    default_repo_file = Path.home() / ".mayushii" / "default-repo"
     if repo:
         repo_path = Path(repo).resolve()
         # Remember for next time
@@ -78,7 +77,7 @@ def start(
     elif default_repo_file.exists():
         repo_path = Path(default_repo_file.read_text().strip())
     else:
-        console.print("[red]No repo specified. Run with --repo /path/to/orchestra first time.[/]")
+        console.print("[red]No repo specified. Run with --repo /path/to/repo first time.[/]")
         console.print("[dim]Subsequent runs will remember the path.[/]")
         raise typer.Exit(1)
 
@@ -106,7 +105,7 @@ def start(
         orch_skill_content = parts[2].strip() if len(parts) >= 3 else raw
 
     # Back up existing CLAUDE.md if present
-    backup_path = repo_path / ".claude" / "CLAUDE.md.orchestra-backup"
+    backup_path = repo_path / ".claude" / "CLAUDE.md.mayushii-backup"
     if orch_claude_md.exists():
         existing_content = orch_claude_md.read_text()
         if "You are Mayushii" not in existing_content:
@@ -114,9 +113,9 @@ def start(
             backup_path.write_text(existing_content)
 
     orch_claude_md.write_text(
-        "# Orchestra — AI Agent Orchestrator\n\n"
+        "# Mayushii — AI Agent Orchestrator\n\n"
         "You are Mayushii, an AI orchestrator that coordinates worker agents.\n"
-        "You have access to `bd` (beads) for task management and `orchestra` CLI for worker management.\n\n"
+        "You have access to `bd` (beads) for task management and `mayushii` CLI for worker management.\n\n"
         f"## Target Repository\n"
         f"You are running in: `{repo_path}`\n"
         f"All `bd` commands work from this directory.\n"
@@ -124,10 +123,10 @@ def start(
         f"{orch_skill_content}\n"
     )
 
-    # 2. Create tmux session
+    # 2. Create tmux session in the repo directory
     if tmux.session_exists(session_name):
         tmux.kill_session(session_name)
-    tmux.create_session(session_name, first_window="orchestrator")
+    tmux.create_session(session_name, first_window="orchestrator", cwd=str(repo_path))
     orch = store.create_orchestrator(session_name)
     target = f"{session_name}:orchestrator"
 
@@ -136,16 +135,14 @@ def start(
     if not tmux.wait_for_ready(target, sentinel="$", timeout=10):
         tmux.wait_for_ready(target, sentinel="%", timeout=5)
 
-    # cd into the target repo (where bd and .beads/ live)
-    tmux.send_command(target, f"cd {repo_path}")
-    time.sleep(0.5)
-
     console.print(f"[dim]Launching Claude Code in {repo_path}...[/]")
     claude_cmd = f"claude --model {model} --dangerously-skip-permissions"
     tmux.send_command(target, claude_cmd)
 
+    # Always wait for Claude Code to be ready before attaching or sending prompt
+    tmux.wait_for_ready(target, timeout=30)
+
     if prompt:
-        tmux.wait_for_ready(target, timeout=30)
         tmux.send_command(target, prompt)
 
     # 3. Attach directly
@@ -170,12 +167,12 @@ def stop() -> None:
     store.stop_orchestrator(orch.id)
 
     # Restore backed-up CLAUDE.md if present
-    default_repo_file = Path.home() / ".orchestra" / "default-repo"
+    default_repo_file = Path.home() / ".mayushii" / "default-repo"
     repo_path = Path(default_repo_file.read_text().strip()) if default_repo_file.exists() else None
     if not repo_path:
         console.print("[green]Orchestrator stopped.[/]")
         return
-    backup_path = repo_path / ".claude" / "CLAUDE.md.orchestra-backup"
+    backup_path = repo_path / ".claude" / "CLAUDE.md.mayushii-backup"
     claude_md = repo_path / "CLAUDE.md"
     if backup_path.exists():
         claude_md.write_text(backup_path.read_text())
@@ -203,7 +200,7 @@ def status() -> None:
     sessions = store.list_sessions(orch.id)
     windows = tmux.list_windows(orch.tmux_session)
 
-    table = Table(title=f"Orchestra — {orch.tmux_session}")
+    table = Table(title=f"Mayushii — {orch.tmux_session}")
     table.add_column("Task ID", style="cyan")
     table.add_column("Role", style="green")
     table.add_column("Skills")
@@ -282,7 +279,7 @@ def worker_start(
     """Launch a worker agent in a tmux window."""
     orch = store.get_active_orchestrator()
     if not orch:
-        console.print("[red]No active orchestrator. Run 'orchestra start' first.[/]")
+        console.print("[red]No active orchestrator. Run 'mayushii start' first.[/]")
         raise typer.Exit(1)
 
     skill_list = [s.strip() for s in skill_names.split(",") if s.strip()]

@@ -40,10 +40,14 @@ def session_exists(session: str) -> bool:
     return _run(["has-session", "-t", session]).returncode == 0
 
 
-def create_session(session: str, first_window: str = "orchestrator") -> None:
+def create_session(session: str, first_window: str = "orchestrator", cwd: str | None = None) -> None:
     if session_exists(session):
         return
-    _run(["new-session", "-d", "-s", session, "-n", first_window], check=True)
+    args = ["new-session", "-d", "-s", session, "-n", first_window, "-x", "200", "-y", "50"]
+    if cwd:
+        args += ["-c", cwd]
+    _run(args, check=True)
+    time.sleep(1)
 
 
 def kill_session(session: str) -> None:
@@ -52,9 +56,16 @@ def kill_session(session: str) -> None:
     _run(["kill-session", "-t", session])
 
 
-def create_window(session: str, name: str, cwd: str | None = None) -> str:
-    """Create a new window, return the target string."""
-    args = ["new-window", "-a", "-t", session, "-n", name]
+def create_window(session: str, name: str, cwd: str | None = None, background: bool = True) -> str:
+    """Create a new window, return the target string.
+
+    background=True (default) keeps focus on the current window so the
+    user stays on the orchestrator pane and workers run invisibly.
+    """
+    args = ["new-window"]
+    if background:
+        args.append("-d")
+    args += ["-a", "-t", session, "-n", name]
     if cwd:
         args += ["-c", cwd]
     _run(args, check=True)

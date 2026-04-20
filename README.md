@@ -1,4 +1,4 @@
-# Orchestra
+# Mayushii
 
 AI Agent Orchestrator — beads task DAG + tmux sessions + Claude Code workers.
 
@@ -32,11 +32,11 @@ The orchestrator is a Claude Code agent that coordinates worker agents. Each wor
 
 ```bash
 # Clone
-git clone https://github.com/santhosh-m1718/orchestra.git
-cd orchestra
+git clone https://github.com/santhosh-m1718/mayushii.git
+cd mayushii
 
 # Install globally (requires uv)
-uv tool install --from . orchestra
+uv tool install --from . mayushii
 
 # Dependencies
 brew install tmux       # session management
@@ -48,7 +48,7 @@ brew install tmux       # session management
 
 ```bash
 # Start the orchestrator (drops you into tmux with Claude)
-orchestra start
+mayushii start
 
 # You're now talking to Mayushii (the orchestrator agent)
 # Ask it to do something:
@@ -66,7 +66,7 @@ The orchestrator will:
 ## Architecture
 
 ```
-orchestra/                  # Python package (CLI toolbox)
+mayushii/                   # Python package (CLI toolbox)
 ├── store.py                # SQLite — orchestrators, sessions, messages
 ├── tmux.py                 # Thin tmux wrapper (send-keys, capture, wait)
 ├── lifecycle.py            # Start/stop/send workers, workspace setup
@@ -96,35 +96,35 @@ orchestrator/
 
 ### Orchestrator
 ```bash
-orchestra start                          # start + auto-attach to tmux
-orchestra start --model claude-sonnet-4-6  # use a different model
-orchestra start --no-attach              # headless mode
-orchestra stop                           # stop everything
-orchestra status                         # dashboard with idle times
-orchestra stalls                         # find stuck workers
+mayushii start                          # start + auto-attach to tmux
+mayushii start --model claude-sonnet-4-6  # use a different model
+mayushii start --no-attach              # headless mode
+mayushii stop                           # stop everything
+mayushii status                         # dashboard with idle times
+mayushii stalls                         # find stuck workers
 ```
 
 ### Workers
 ```bash
-orchestra worker start orch-XX --role explore --skills debug,backend
-orchestra worker start orch-XX --role edit --repo /path/to/repo
-orchestra worker start orch-XX --role explore --auto-skills  # LLM picks skills
-orchestra worker send orch-XX "hint" --type nudge            # light touch
-orchestra worker send orch-XX "new direction" --type divert  # interrupt + redirect
-orchestra worker list                                         # show all workers
-orchestra worker output orch-XX                               # capture pane output
-orchestra worker stop orch-XX
+mayushii worker start orch-XX --role explore --skills debug,backend
+mayushii worker start orch-XX --role edit --repo /path/to/repo
+mayushii worker start orch-XX --role explore --auto-skills  # LLM picks skills
+mayushii worker send orch-XX "hint" --type nudge            # light touch
+mayushii worker send orch-XX "new direction" --type divert  # interrupt + redirect
+mayushii worker list                                         # show all workers
+mayushii worker output orch-XX                               # capture pane output
+mayushii worker stop orch-XX
 ```
 
 ### Skills
 ```bash
-orchestra skill list                     # show available skills
-orchestra skill select "fix auth bug" --role explore  # LLM selection
+mayushii skill list                     # show available skills
+mayushii skill select "fix auth bug" --role explore  # LLM selection
 ```
 
 ### Inter-Agent Communication
 ```bash
-orchestra crew ask orch-XX "should I use JWT or sessions?"  # worker → orchestrator
+mayushii crew ask orch-XX "should I use JWT or sessions?"  # worker → orchestrator
 ```
 
 ## Message Types
@@ -138,7 +138,7 @@ orchestra crew ask orch-XX "should I use JWT or sessions?"  # worker → orchest
 
 ## Hooks
 
-Workers have three Claude Code hooks that call back into `orchestra`:
+Workers have three Claude Code hooks that call back into `mayushii`:
 
 | Hook | When | What It Does |
 |------|------|-------------|
@@ -148,14 +148,14 @@ Workers have three Claude Code hooks that call back into `orchestra`:
 
 ## Skills
 
-Skills are loaded from an external repo (default: `~/.orchestra/skills/`). Each skill is a directory with a `SKILL.md` following the [Agent Skills Standard](https://agentskills.io).
+Skills are loaded from an external repo (default: `~/.mayushii/skills/`). Each skill is a directory with a `SKILL.md` following the [Agent Skills Standard](https://agentskills.io).
 
 ```bash
 # Clone a skills repo
-git clone https://github.com/cbx1/skills ~/.orchestra/skills
+git clone https://github.com/cbx1/skills ~/.mayushii/skills
 
 # Or set a custom path
-export ORCHESTRA_SKILLS_REPO=/path/to/your/skills
+export MAYUSHII_SKILLS_REPO=/path/to/your/skills
 ```
 
 Skills are **symlinked** into worker workspaces so Claude Code auto-loads them. The orchestrator can use LLM-powered selection to pick the right skills per task.

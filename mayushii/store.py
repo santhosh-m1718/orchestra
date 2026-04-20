@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Generator
 
 
-ORCHESTRA_HOME = Path.home() / ".orchestra"
-DB_PATH = ORCHESTRA_HOME / "orchestra.db"
+MAYUSHII_HOME = Path.home() / ".mayushii"
+DB_PATH = MAYUSHII_HOME / "mayushii.db"
 
 
 class SessionStatus(str, Enum):
@@ -242,7 +242,7 @@ class Store:
             if existing and existing["status"] in ("starting", "running"):
                 raise ValueError(
                     f"Session {task_id} already active (status={existing['status']}). "
-                    "Stop it first with `orchestra worker stop`."
+                    "Stop it first with `mayushii worker stop`."
                 )
             conn.execute(
                 """INSERT OR REPLACE INTO sessions

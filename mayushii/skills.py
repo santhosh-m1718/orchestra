@@ -21,7 +21,7 @@ from typing import Any
 import yaml
 
 
-SKILLS_REPO_DEFAULT = Path.home() / ".orchestra" / "skills"
+SKILLS_REPO_DEFAULT = Path.home() / ".mayushii" / "skills"
 
 
 @dataclass
@@ -34,7 +34,7 @@ class SkillMeta:
 
 
 def discover_skills_repo() -> Path:
-    env = os.environ.get("ORCHESTRA_SKILLS_REPO")
+    env = os.environ.get("MAYUSHII_SKILLS_REPO")
     if env:
         return Path(env)
     return SKILLS_REPO_DEFAULT
@@ -105,7 +105,7 @@ def select_skills_via_llm(
     try:
         import anthropic
     except ImportError:
-        print("[orchestra] WARNING: anthropic SDK not installed, cannot select skills via LLM", file=sys.stderr)
+        print("[mayushii] WARNING: anthropic SDK not installed, cannot select skills via LLM", file=sys.stderr)
         return []
 
     catalog_text = format_catalog_for_llm(catalog)
@@ -131,13 +131,13 @@ def select_skills_via_llm(
             }],
         )
     except Exception as e:
-        print(f"[orchestra] WARNING: LLM skill selection failed: {e}", file=sys.stderr)
+        print(f"[mayushii] WARNING: LLM skill selection failed: {e}", file=sys.stderr)
         return []
 
     text = response.content[0].text.strip()
     match = re.search(r"\[.*?\]", text, re.DOTALL)
     if not match:
-        print(f"[orchestra] WARNING: LLM returned non-JSON skill selection: {text[:100]}", file=sys.stderr)
+        print(f"[mayushii] WARNING: LLM returned non-JSON skill selection: {text[:100]}", file=sys.stderr)
         return []
 
     try:
@@ -146,7 +146,7 @@ def select_skills_via_llm(
         selected = [n for n in names if n in valid][:max_skills]
         rejected = [n for n in names if n not in valid]
         if rejected:
-            print(f"[orchestra] WARNING: LLM selected unknown skills (ignored): {rejected}", file=sys.stderr)
+            print(f"[mayushii] WARNING: LLM selected unknown skills (ignored): {rejected}", file=sys.stderr)
         return selected
     except (json.JSONDecodeError, TypeError):
         return []
@@ -163,11 +163,11 @@ def inject_skills(workspace: Path, skill_names: list[str], skills_repo: Path | N
     for name in skill_names:
         src = repo / name
         if not src.exists():
-            print(f"[orchestra] WARNING: skill '{name}' not found at {src}", file=sys.stderr)
+            print(f"[mayushii] WARNING: skill '{name}' not found at {src}", file=sys.stderr)
             continue
         # Validate path stays within skills repo (prevent traversal)
         if not src.resolve().is_relative_to(repo_resolved):
-            print(f"[orchestra] WARNING: skill '{name}' escapes skills repo, skipping", file=sys.stderr)
+            print(f"[mayushii] WARNING: skill '{name}' escapes skills repo, skipping", file=sys.stderr)
             continue
         dst = skills_dir / name
         if dst.exists() or dst.is_symlink():
