@@ -1,0 +1,444 @@
+"""Orchestra CLI — Typer-based interface for the orchestrator.
+
+Commands:
+  orchestra start                         — start orchestrator tmux session
+  orchestra stop                          — stop everything
+  orchestra status                        — show dashboard
+  orchestra stalls                        — check for stalled workers
+  orchestra worker start <id>             — launch worker
+  orchestra worker send <id> <msg>        — message a worker
+  orchestra worker list                   — show workers
+  orchestra worker stop <id>              — stop worker
+  orchestra worker output <id>            — capture worker output
+  orchestra crew ask <id> <question>      — worker asks orchestrator
+  orchestra hook session-start <id>       — called by SessionStart hook
+  orchestra hook heartbeat <id>           — called by PostToolUse hook
+  orchestra hook stop <id>                — called by Stop hook
+  orchestra skill list                    — list available skills
+  orchestra skill select <desc>           — LLM skill selection
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import time
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+
+from orchestra.store import Store, MessageDirection
+from orchestra import tmux, lifecycle, skills
+from orchestra.hooks import handle_session_start, handle_heartbeat, handle_stop
+
+app = typer.Typer(name="orchestra", help="AI Agent Orchestrator — beads + tmux + Claude Code")
+worker_app = typer.Typer(name="worker", help="Manage worker agents")
+skill_app = typer.Typer(name="skill", help="Manage skills")
+hook_app = typer.Typer(name="hook", help="Hook callbacks (called by Claude Code, not you)")
+crew_app = typer.Typer(name="crew", help="Inter-agent communication")
+app.add_typer(worker_app, name="worker")
+app.add_typer(skill_app, name="skill")
+app.add_typer(hook_app, name="hook")
+app.add_typer(crew_app, name="crew")
+
+console = Console()
+store = Store()
+
+
+# ============================================================
+# Top-level commands
+# ============================================================
+
+@app.command()
+def start(
+    session_name: str = typer.Option("orchestra", "--name", "-n", help="tmux session name"),
+    prompt: str = typer.Option("", "--prompt", "-p", help="Initial prompt for orchestrator"),
+    model: str = typer.Option("claude-opus-4-6", "--model", "-m", help="Claude model to use"),
+    no_attach: bool = typer.Option(False, "--no-attach", help="Don't auto-attach to tmux"),
+) -> None:
+    """Start the orchestrator — creates tmux session, launches Claude Code, and attaches you."""
+    existing = store.get_active_orchestrator()
+    if existing and tmux.session_exists(existing.tmux_session):
+        console.print(f"[yellow]Orchestrator already running, attaching...[/]")
+        subprocess.run(["tmux", "attach-session", "-t", existing.tmux_session])
+        return
+
+    # 1. Set up orchestrator workspace
+    workspace = Path.home() / ".orchestra" / "orchestrator-workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # Write CLAUDE.md from orchestrator SKILL.md
+    orch_skill_src = Path(__file__).parent.parent / "orchestrator" / "SKILL.md"
+    skill_content = ""
+    if orch_skill_src.exists():
+        raw = orch_skill_src.read_text()
+        parts = raw.split("---", 2)
+        skill_content = parts[2].strip() if len(parts) >= 3 else raw
+
+    claude_md = workspace / "CLAUDE.md"
+    claude_md.write_text(
+        "# Orchestra — AI Agent Orchestrator\n\n"
+        "You are Mayushii, an AI orchestrator that coordinates worker agents.\n"
+        "You have access to `bd` (beads) for task management and `orchestra` CLI for worker management.\n\n"
+        f"{skill_content}\n"
+    )
+
+    # Symlink orchestrator skill
+    skills_dir = workspace / ".claude" / "skills" / "orchestrator"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_dst = skills_dir / "SKILL.md"
+    if skill_dst.exists() or skill_dst.is_symlink():
+        skill_dst.unlink()
+    if orch_skill_src.exists():
+        skill_dst.write_text(orch_skill_src.read_text())
+
+    # 2. Create tmux session
+    tmux.create_session(session_name, first_window="orchestrator")
+    orch = store.create_orchestrator(session_name)
+    target = f"{session_name}:orchestrator"
+
+    # cd into workspace, then launch Claude
+    tmux.send_command(target, f"cd {workspace}")
+    time.sleep(0.5)
+
+    claude_cmd = f"claude --model {model} --dangerously-skip-permissions"
+    tmux.send_command(target, claude_cmd)
+
+    if prompt:
+        tmux.wait_for_ready(target, timeout=30)
+        tmux.send_command(target, prompt)
+
+    # 3. Attach directly
+    if not no_attach:
+        subprocess.run(["tmux", "attach-session", "-t", session_name])
+
+
+@app.command()
+def stop() -> None:
+    """Stop the orchestrator and all workers."""
+    orch = store.get_active_orchestrator()
+    if not orch:
+        console.print("[yellow]No active orchestrator.[/]")
+        return
+
+    sessions = store.list_running_sessions(orch.id)
+    for session in sessions:
+        lifecycle.stop_worker(store, session.task_id)
+        console.print(f"  Stopped worker: {session.task_id}")
+
+    tmux.kill_session(orch.tmux_session)
+    store.stop_orchestrator(orch.id)
+    console.print("[green]Orchestrator stopped.[/]")
+
+
+@app.command()
+def status() -> None:
+    """Show orchestrator status dashboard."""
+    orch = store.get_active_orchestrator()
+    if not orch:
+        console.print("[yellow]No active orchestrator.[/]")
+        return
+
+    lifecycle.refresh_worker_states(store, orch.id)
+    sessions = store.list_sessions(orch.id)
+    windows = tmux.list_windows(orch.tmux_session)
+
+    table = Table(title=f"Orchestra — {orch.tmux_session}")
+    table.add_column("Task ID", style="cyan")
+    table.add_column("Role", style="green")
+    table.add_column("Skills")
+    table.add_column("Status")
+    table.add_column("Idle", justify="right")
+
+    for s in sessions:
+        status_style = {
+            "running": "[green]running[/]",
+            "starting": "[yellow]starting[/]",
+            "done": "[dim]done[/]",
+            "failed": "[red]failed[/]",
+            "stopped": "[dim]stopped[/]",
+        }.get(s.status, s.status)
+
+        idle = ""
+        if s.status == "running":
+            idle_s = int(s.idle_seconds)
+            if idle_s > 600:
+                idle = f"[red]{idle_s // 60}m[/]"
+            elif idle_s > 60:
+                idle = f"[yellow]{idle_s // 60}m[/]"
+            else:
+                idle = f"{idle_s}s"
+
+        table.add_row(s.task_id, s.role, s.skills, status_style, idle)
+
+    console.print(table)
+    console.print(f"\n[dim]Tmux windows: {len(windows)} | Workers: {len(sessions)}[/]")
+
+
+@app.command()
+def stalls(
+    threshold: int = typer.Option(10, "--threshold", "-t", help="Minutes of inactivity to consider stalled"),
+) -> None:
+    """Check for stalled workers and report them."""
+    orch = store.get_active_orchestrator()
+    if not orch:
+        console.print("[yellow]No active orchestrator.[/]")
+        return
+
+    stale = store.list_stale_sessions(orch.id, threshold_minutes=threshold)
+    if not stale:
+        console.print("[green]No stalled workers.[/]")
+        return
+
+    console.print(f"[red]Found {len(stale)} stalled worker(s):[/]")
+    for s in stale:
+        idle_min = int(s.idle_seconds / 60)
+        console.print(f"  {s.task_id} ({s.role}) — idle {idle_min}m")
+
+    # Signal orchestrator about stalls
+    for s in stale:
+        idle_min = int(s.idle_seconds / 60)
+        target = f"{orch.tmux_session}:orchestrator"
+        try:
+            tmux.send_command(target, f"[Worker {s.task_id}]: stalled — no activity for {idle_min} minutes")
+        except Exception:
+            pass
+
+
+# ============================================================
+# Worker commands
+# ============================================================
+
+@worker_app.command("start")
+def worker_start(
+    task_id: str = typer.Argument(help="Beads task ID (e.g. orch-9ak)"),
+    role: str = typer.Option("explore", "--role", "-r", help="Agent role: explore|plan|edit|verify"),
+    skill_names: str = typer.Option("", "--skills", "-s", help="Comma-separated skill names"),
+    context: str = typer.Option("", "--context", "-c", help="Context from prior tasks"),
+    prompt: str = typer.Option("", "--prompt", "-p", help="Custom initial prompt"),
+    repo: str = typer.Option("", "--repo", help="Repository path to work in"),
+    auto_skills: bool = typer.Option(False, "--auto-skills", help="LLM-select skills automatically"),
+) -> None:
+    """Launch a worker agent in a tmux window."""
+    orch = store.get_active_orchestrator()
+    if not orch:
+        console.print("[red]No active orchestrator. Run 'orchestra start' first.[/]")
+        raise typer.Exit(1)
+
+    skill_list = [s.strip() for s in skill_names.split(",") if s.strip()]
+
+    if auto_skills and not skill_list:
+        catalog = skills.load_catalog()
+        if catalog:
+            skill_list = skills.select_skills_via_llm(
+                task_description=f"Task {task_id}, role: {role}",
+                role=role,
+                catalog=catalog,
+            )
+            console.print(f"[dim]Auto-selected skills: {', '.join(skill_list) or 'none'}[/]")
+
+    session = lifecycle.start_worker(
+        store=store,
+        orchestrator_id=orch.id,
+        orch_session=orch.tmux_session,
+        task_id=task_id,
+        role=role,
+        skills=skill_list,
+        context=context,
+        prompt=prompt or None,
+        repo_path=repo or None,
+    )
+
+    console.print(Panel(
+        f"[bold green]Worker launched[/]\n\n"
+        f"Task: {task_id}\n"
+        f"Role: {role}\n"
+        f"Skills: {', '.join(skill_list) or 'none'}\n"
+        f"Window: {session.window_name}",
+        title="Worker Started",
+    ))
+
+
+@worker_app.command("stop")
+def worker_stop(
+    task_id: str = typer.Argument(help="Task ID of worker to stop"),
+) -> None:
+    """Stop a worker agent."""
+    lifecycle.stop_worker(store, task_id)
+    console.print(f"[green]Worker {task_id} stopped.[/]")
+
+
+@worker_app.command("send")
+def worker_send(
+    task_id: str = typer.Argument(help="Task ID of target worker"),
+    message: str = typer.Argument(help="Message content"),
+    msg_type: str = typer.Option("nudge", "--type", "-t", help="Message type: nudge|status|normal|divert"),
+) -> None:
+    """Send a message to a worker."""
+    lifecycle.send_message(store, task_id, msg_type, message)
+    console.print(f"[green]Sent {msg_type} to {task_id}[/]")
+
+
+@worker_app.command("list")
+def worker_list() -> None:
+    """List all workers."""
+    orch = store.get_active_orchestrator()
+    if not orch:
+        console.print("[yellow]No active orchestrator.[/]")
+        return
+
+    lifecycle.refresh_worker_states(store, orch.id)
+    sessions = store.list_sessions(orch.id)
+
+    if not sessions:
+        console.print("[dim]No workers.[/]")
+        return
+
+    table = Table(title="Workers")
+    table.add_column("Task ID", style="cyan")
+    table.add_column("Role")
+    table.add_column("Status")
+    table.add_column("Skills")
+    table.add_column("Idle", justify="right")
+
+    for s in sessions:
+        idle = ""
+        if s.status == "running":
+            idle = f"{int(s.idle_seconds)}s"
+        table.add_row(s.task_id, s.role, s.status, s.skills, idle)
+
+    console.print(table)
+
+
+@worker_app.command("output")
+def worker_output(
+    task_id: str = typer.Argument(help="Task ID"),
+    lines: int = typer.Option(30, "--lines", "-n", help="Number of lines to capture"),
+) -> None:
+    """Capture recent output from a worker."""
+    output = lifecycle.check_worker_output(store, task_id, lines)
+    if output:
+        console.print(Panel(output, title=f"Worker {task_id} — last {lines} lines"))
+    else:
+        console.print(f"[yellow]No output for {task_id}[/]")
+
+
+# ============================================================
+# Crew commands (inter-agent communication)
+# ============================================================
+
+@crew_app.command("ask")
+def crew_ask(
+    task_id: str = typer.Argument(help="Your task ID"),
+    question: str = typer.Argument(help="Question for the orchestrator"),
+) -> None:
+    """Ask the orchestrator a question (used by workers)."""
+    session = store.get_session(task_id)
+    if not session:
+        console.print(f"[red]No session for {task_id}[/]")
+        raise typer.Exit(1)
+
+    # Store in SQLite
+    store.put_message(task_id, MessageDirection.TO_ORCHESTRATOR, "normal", question)
+
+    # Signal orchestrator via tmux
+    orch = store.get_orchestrator(session.orchestrator_id)
+    if orch:
+        target = f"{orch.tmux_session}:orchestrator"
+        try:
+            tmux.send_command(target, f"[Worker {task_id} asks]: {question}")
+        except Exception:
+            pass
+
+    console.print(f"[green]Question sent to orchestrator.[/]")
+
+
+# ============================================================
+# Hook commands (called by Claude Code hooks, not by users)
+# ============================================================
+
+@hook_app.command("session-start")
+def hook_session_start_cmd(
+    task_id: str = typer.Argument(help="Task ID"),
+) -> None:
+    """SessionStart hook — injects task context into worker agent."""
+    output = handle_session_start(task_id)
+    if output:
+        # Print to stdout — Claude Code captures this and injects into context
+        print(output)
+
+
+@hook_app.command("heartbeat")
+def hook_heartbeat_cmd(
+    task_id: str = typer.Argument(help="Task ID"),
+) -> None:
+    """PostToolUse hook — lightweight heartbeat, just touches last_seen."""
+    handle_heartbeat(task_id)
+
+
+@hook_app.command("stop")
+def hook_stop_cmd(
+    task_id: str = typer.Argument(help="Task ID"),
+) -> None:
+    """Stop hook — checks beads status and signals orchestrator."""
+    handle_stop(task_id)
+
+
+# ============================================================
+# Skill commands
+# ============================================================
+
+@skill_app.command("list")
+def skill_list_cmd(
+    repo: str = typer.Option("", "--repo", help="Skills repo path"),
+) -> None:
+    """List available skills."""
+    repo_path = Path(repo) if repo else None
+    catalog = skills.load_catalog(repo_path)
+
+    if not catalog:
+        console.print("[yellow]No skills found.[/]")
+        console.print(f"[dim]Looking in: {skills.discover_skills_repo()}[/]")
+        return
+
+    table = Table(title="Available Skills")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description")
+    table.add_column("Extras", style="dim")
+
+    for s in catalog:
+        extras = []
+        if s.has_scripts:
+            extras.append("scripts")
+        if s.has_references:
+            extras.append("refs")
+        table.add_row(s.name, s.description[:60], ", ".join(extras))
+
+    console.print(table)
+
+
+@skill_app.command("select")
+def skill_select_cmd(
+    description: str = typer.Argument(help="Task description"),
+    role: str = typer.Option("explore", "--role", "-r"),
+    max_skills: int = typer.Option(4, "--max", "-m"),
+) -> None:
+    """Use LLM to select skills for a task."""
+    catalog = skills.load_catalog()
+    if not catalog:
+        console.print("[yellow]No skills available.[/]")
+        return
+
+    selected = skills.select_skills_via_llm(description, role, catalog, max_skills)
+
+    if selected:
+        console.print(f"[green]Selected skills:[/] {', '.join(selected)}")
+    else:
+        console.print("[yellow]No skills selected (or LLM call failed).[/]")
+
+
+if __name__ == "__main__":
+    app()
