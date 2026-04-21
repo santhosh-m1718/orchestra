@@ -28,12 +28,12 @@ bd search "keyword"                                 # find tasks
 ```
 
 ### Worker Management
-**ALWAYS pass `--repo <path>` from the "Target Repository" section in CLAUDE.md.**
+Workers auto-resolve repos from the repos/ directory. Use `--repo-name <name>` if multiple repos exist.
 ```bash
-mayushii worker start orch-XX --role explore --skills debug,backend --repo /path/to/repo
-mayushii worker start orch-XX --role edit --skills git,backend --repo /path/to/repo
-mayushii worker start orch-XX --role verify --skills code-review --repo /path/to/repo
-mayushii worker start orch-XX --role explore --auto-skills --repo /path/to/repo
+mayushii worker start orch-XX --role explore --skills debug,backend
+mayushii worker start orch-XX --role edit --skills git,backend
+mayushii worker start orch-XX --role verify --skills code-review
+mayushii worker start orch-XX --role explore --auto-skills
 mayushii worker send orch-XX "message" --type nudge          # light touch
 mayushii worker send orch-XX "message" --type status         # /btw query
 mayushii worker send orch-XX "message" --type normal         # full context
@@ -102,8 +102,7 @@ bd create "Edit: implement the fix" -t task -p 1 --deps orch-abc
 ### 4. Launch Workers as Tasks Become Ready
 ```bash
 bd ready --json                    # what's unblocked?
-mayushii worker start orch-abc --role explore --skills debug,backend --repo /path/to/repo
-# ALWAYS use the --repo path from your CLAUDE.md "Target Repository" section
+mayushii worker start orch-abc --role explore --skills debug,backend
 ```
 
 ### 5. Monitor and Coordinate — WAIT FOR WORKERS
@@ -151,7 +150,7 @@ mayushii worker send orch-def "Explore found bug in auth.py:142, session token n
 ## Rules
 - **You are the user's sole interface** — workers run in background, user never sees them
 - **Report progress to the user** — when workers complete or fail, summarize what happened
-- **ALWAYS pass `--repo` when starting workers** — use the path from "Target Repository" in your CLAUDE.md
+- **Workers auto-find repos** — they look in repos/ automatically. Use --repo-name for multi-repo setups
 - **NEVER report done until all workers signal completion** — monitor with `mayushii status` and `mayushii worker output`
 - **Give workers focused tasks** — "check lifecycle.py for path bugs" not "audit the whole codebase"
 - Always create beads tasks BEFORE launching workers
